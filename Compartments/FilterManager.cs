@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using ExileCore2;
 using ExileCore2.Shared;
+using ExileCore2.Shared.Enums;
 using ItemFilterLibrary;
 using Stashie.Classes;
 using static Stashie.StashieCore;
@@ -83,12 +84,13 @@ internal class FilterManager
 
     public static async SyncTask<bool> ParseItems()
     {
-        var _serverData = Main.GameController.Game.IngameState.Data.ServerData;
+        var _controller = Main.GameController;
+        var _serverData = _controller.Game.IngameState.Data.ServerData;
         var invItems = _serverData.PlayerInventories[0].Inventory.InventorySlotItems;
 
         await TaskUtils.CheckEveryFrameWithThrow(() => invItems != null, new CancellationTokenSource(500).Token);
         Main.DropItems = [];
-        Main.ClickWindowOffset = Main.GameController.Window.GetWindowRectangle().TopLeft;
+        Main.ClickWindowOffset = _controller.Window.GetWindowRectangle().TopLeft;
 
         foreach (var invItem in invItems)
         {
@@ -98,10 +100,44 @@ internal class FilterManager
             if (Utility.CheckIgnoreCells(invItem, (12, 5), Main.Settings.IgnoredCells))
                 continue;
 
-            var testItem = new ItemData(invItem.Item, Main.GameController);
+            var testItem = new ItemData(invItem.Item, _controller);
             var result = CheckFilters(testItem, invItem.GetClientRect().Center);
             if (result != null)
                 Main.DropItems.Add(result);
+        }
+
+        // Handle items in expanded inventory from the Titan ascendancy in PoE 2
+        HandleExpandedInventory();
+
+        void HandleExpandedInventory()
+        {
+            var expandedItems = _serverData?.PlayerInventories
+                ?.FirstOrDefault(x => x is { Inventory: { InventSlot: InventorySlotE.ExpandedInventory1, ItemCount: > 0 } })
+                ?.Inventory?.InventorySlotItems;
+
+            if (expandedItems is not { Count: > 0 })
+                return;
+
+            var expandedPanel = _controller.IngameState.IngameUi
+                ?.OpenRightPanel
+                ?.GetChildAtIndex(5)
+                ?.GetChildAtIndex(37);
+
+            if (expandedPanel?.IsVisible != true)
+                return;
+
+            foreach (var invItem in expandedItems.Where(i => i is { Item: not null}))
+            {
+                // TODO: Implement cell ignoring for expanded inventory
+                // if (Utility.CheckIgnoreCells(invItem, (12, 5), Main.Settings.IgnoredCells))
+                //     continue;
+
+                var clickPos = invItem.GetClientRect().Center;
+                clickPos.X -= 245;
+
+                if (CheckFilters(new ItemData(invItem.Item, _controller), clickPos) is { } result)
+                    Main.DropItems.Add(result);
+            }
         }
 
         #region Ignore 1 max stack of wisdoms/portals
